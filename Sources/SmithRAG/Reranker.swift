@@ -4,15 +4,13 @@ import Logging
 import FoundationNetworking
 #endif
 
-/// Reranks search results using a cross-encoder model (via Ollama)
+/// Reranks search results using Jina Reranker v3 MLX (local, Apple Silicon optimized)
 public actor Reranker {
-    private let baseURL: String
-    private let model: String
+    private let rerankerPath: String
     private let logger = Logger(label: "smith-rag.reranker")
     
-    public init(baseURL: String = "http://localhost:11434", model: String = "bge-reranker-base") {
-        self.baseURL = baseURL
-        self.model = model
+    public init(rerankerPath: String = "/Volumes/Plutonian/_models/jina-reranker/jina-rerank-cli.py") {
+        self.rerankerPath = rerankerPath
     }
     
     /// Rerank candidates based on relevance to query
@@ -22,93 +20,67 @@ public actor Reranker {
         candidates: [(id: String, text: String, score: Float)],
         topK: Int
     ) async throws -> [(id: String, text: String, score: Float)] {
-        // If reranker model not available, fall back to original scores
-        guard await isAvailable() else {
-            logger.warning("Reranker not available, using original scores")
+        // Check if reranker is available
+        guard FileManager.default.fileExists(atPath: rerankerPath) else {
+            logger.warning("Jina reranker not found at \(rerankerPath), using original scores")
             return Array(candidates.prefix(topK))
         }
         
-        var reranked: [(id: String, text: String, score: Float)] = []
-        
-        for candidate in candidates {
-            let score = try await scoreRelevance(query: query, document: candidate.text)
-            reranked.append((candidate.id, candidate.text, score))
+        // Prepare candidates JSON
+        let candidateTexts = candidates.map { $0.text }
+        guard let candidatesJSON = try? JSONSerialization.data(withJSONObject: candidateTexts),
+              let candidatesString = String(data: candidatesJSON, encoding: .utf8) else {
+            logger.warning("Failed to encode candidates, using original scores")
+            return Array(candidates.prefix(topK))
         }
         
-        return reranked
-            .sorted { $0.score > $1.score }
-            .prefix(topK)
-            .map { $0 }
-    }
-    
-    /// Score relevance of a single document to a query
-    private func scoreRelevance(query: String, document: String) async throws -> Float {
-        let url = URL(string: "\(baseURL)/api/generate")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 10
-        
-        // Use the model's scoring capability
-        // For models that don't support direct scoring, we prompt for relevance
-        let prompt = """
-        Query: \(query)
-        Document: \(document.prefix(500))
-        
-        Rate relevance 0-10:
-        """
-        
-        let body: [String: Any] = [
-            "model": model,
-            "prompt": prompt,
-            "stream": false,
-            "options": ["num_predict": 5]
+        // Call Python reranker
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [
+            rerankerPath,
+            "--query", query,
+            "--candidates", candidatesString,
+            "--top-k", String(topK)
         ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200,
-              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let responseText = json["response"] as? String else {
-            return 0.5 // Neutral score on failure
-        }
-        
-        // Parse score from response
-        let score = parseScore(from: responseText)
-        return score
-    }
-    
-    private func parseScore(from text: String) -> Float {
-        // Extract first number from response
-        let pattern = #"(\d+(?:\.\d+)?)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text),
-              let value = Float(text[range]) else {
-            return 0.5
-        }
-        // Normalize to 0-1
-        return min(max(value / 10.0, 0), 1)
-    }
-    
-    /// Check if reranker model is available
-    public func isAvailable() async -> Bool {
-        guard let url = URL(string: "\(baseURL)/api/tags") else { return false }
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
         
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard (response as? HTTPURLResponse)?.statusCode == 200,
-                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let models = json["models"] as? [[String: Any]] else {
-                return false
+            try process.run()
+            process.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8),
+                  let resultData = output.data(using: .utf8),
+                  let results = try? JSONDecoder().decode([RerankerResult].self, from: resultData) else {
+                logger.warning("Failed to parse reranker output, using original scores")
+                return Array(candidates.prefix(topK))
             }
             
-            // Check if our model is in the list
-            return models.contains { ($0["name"] as? String)?.contains(model) == true }
+            // Map results back to original IDs
+            return results.map { result in
+                let originalId = candidates[result.index].id
+                return (originalId, result.text, result.score)
+            }
+            
         } catch {
-            return false
+            logger.warning("Reranker process failed: \(error), using original scores")
+            return Array(candidates.prefix(topK))
         }
     }
+    
+    /// Check if Jina reranker is available
+    public func isAvailable() async -> Bool {
+        FileManager.default.fileExists(atPath: rerankerPath)
+    }
 }
+
+private struct RerankerResult: Codable {
+    let index: Int
+    let text: String
+    let score: Float
+}
+

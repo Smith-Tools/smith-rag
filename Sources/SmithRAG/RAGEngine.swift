@@ -16,12 +16,12 @@ public actor RAGEngine {
         databasePath: String,
         ollamaURL: String = "http://localhost:11434",
         embeddingModel: String = "nomic-embed-text",
-        rerankerModel: String = "bge-reranker-base"
+        rerankerPath: String = "/Volumes/Plutonian/_models/jina-reranker/jina-rerank-cli.py"
     ) throws {
         self.store = try ChunkStore(databasePath: databasePath)
         self.embedder = Embedder(baseURL: ollamaURL, model: embeddingModel)
         self.vectorSearch = VectorSearch()
-        self.reranker = Reranker(baseURL: ollamaURL, model: rerankerModel)
+        self.reranker = Reranker(rerankerPath: rerankerPath)
     }
     
     // MARK: - Search
