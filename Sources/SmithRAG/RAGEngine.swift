@@ -154,6 +154,8 @@ public actor RAGEngine {
             var vector: [Float]?
             do {
                 vector = try await embedder.embed(chunkText)
+                // Small delay to avoid overwhelming Ollama
+                try await Task.sleep(nanoseconds: 100_000_000) // 100ms
             } catch {
                 logger.warning("Failed to embed chunk \(index): \(error)")
             }
