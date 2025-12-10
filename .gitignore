@@ -1,0 +1,8 @@
+# Smith RAG
+
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/
+*.xcworkspace/
+.DS_Store
