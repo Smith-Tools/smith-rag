@@ -203,19 +203,19 @@ public actor RAGEngine {
 
 // MARK: - Types
 
-public struct SearchResult: Codable {
+public struct SearchResult: Codable, Sendable {
     public let id: String
     public let snippet: String
     public let score: Float
 }
 
-public struct FetchResult: Codable {
+public struct FetchResult: Codable, Sendable {
     public let id: String
     public let content: String
     public let mode: FetchMode
 }
 
-public enum FetchMode: String, Codable {
+public enum FetchMode: String, Codable, Sendable {
     case chunk
     case context
     case full
