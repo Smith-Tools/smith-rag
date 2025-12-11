@@ -155,7 +155,7 @@ public actor RAGEngine {
             do {
                 vector = try await embedder.embed(chunkText)
                 // Small delay to avoid overwhelming Ollama
-                try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+                try await Task.sleep(nanoseconds: 2_000_000_000) // 2s
             } catch {
                 logger.warning("Failed to embed chunk \(index): \(error)")
             }
@@ -208,7 +208,7 @@ public actor RAGEngine {
                 success += 1
                 
                 // Small delay to avoid overwhelming Ollama
-                try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+                try await Task.sleep(nanoseconds: 2_000_000_000) // 2s
             } catch {
                 logger.warning("Failed to embed chunk \(id): \(error)")
             }
