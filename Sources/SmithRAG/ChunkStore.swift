@@ -136,6 +136,29 @@ public actor ChunkStore {
         }
     }
     
+    /// Fetch chunks that don't have embeddings
+    public func fetchChunksWithoutVectors(limit: Int) throws -> [(id: String, text: String)] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, text FROM chunks WHERE vector IS NULL LIMIT ?",
+                arguments: [limit]
+            )
+            return rows.map { ($0["id"], $0["text"]) }
+        }
+    }
+    
+    /// Update a chunk's vector
+    public func updateChunkVector(id: String, vector: [Float]) throws {
+        try dbQueue.write { db in
+            let blob = floatsToBlob(vector)
+            try db.execute(
+                sql: "UPDATE chunks SET vector = ? WHERE id = ?",
+                arguments: [blob, id]
+            )
+        }
+    }
+    
     // MARK: - FTS Search (fallback)
     
     public func keywordSearch(query: String, limit: Int) throws -> [(id: String, snippet: String)] {

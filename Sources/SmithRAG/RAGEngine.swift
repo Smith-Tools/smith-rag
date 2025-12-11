@@ -155,7 +155,7 @@ public actor RAGEngine {
             do {
                 vector = try await embedder.embed(chunkText)
                 // Small delay to avoid overwhelming Ollama
-                try await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                try await Task.sleep(nanoseconds: 200_000_000) // 200ms
             } catch {
                 logger.warning("Failed to embed chunk \(index): \(error)")
             }
@@ -192,6 +192,34 @@ public actor RAGEngine {
     }
     
     // MARK: - Status
+    
+    /// Re-embed chunks that are missing vectors
+    public func embedMissing(batchSize: Int = 100) async throws -> Int {
+        logger.info("Finding chunks without embeddings...")
+        
+        let missingChunks = try await store.fetchChunksWithoutVectors(limit: batchSize)
+        logger.info("Found \(missingChunks.count) chunks without vectors")
+        
+        var success = 0
+        for (id, text) in missingChunks {
+            do {
+                let vector = try await embedder.embed(text)
+                try await store.updateChunkVector(id: id, vector: vector)
+                success += 1
+                
+                // Small delay to avoid overwhelming Ollama
+                try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            } catch {
+                logger.warning("Failed to embed chunk \(id): \(error)")
+            }
+        }
+        
+        // Invalidate cache
+        vectorCache = nil
+        
+        logger.info("Embedded \(success)/\(missingChunks.count) chunks")
+        return success
+    }
     
     /// Check if Ollama is available
     public func checkOllama() async -> (embedding: Bool, reranker: Bool) {
