@@ -1,17 +1,29 @@
 import Foundation
 import Logging
 
+/// Backend configuration for RAG engine
+public enum RAGBackend: Sendable {
+    case ollama(url: String, model: String)
+    case mlx(modelId: String)
+}
+
 /// Main RAG engine that orchestrates search and fetch operations
 public actor RAGEngine {
     private let store: ChunkStore
-    private let embedder: Embedder
     private let vectorSearch: VectorSearch
-    private let reranker: Reranker
     private let logger = Logger(label: "smith-rag.engine")
+    
+    // Backend-specific components
+    private let backend: RAGBackend
+    private var ollamaEmbedder: Embedder?
+    private var ollamaReranker: Reranker?
+    private var mlxEmbedder: MLXEmbedder?
+    private var mlxReranker: MLXReranker?
     
     /// Cached vectors for faster search
     private var vectorCache: [(id: String, vector: [Float])]?
     
+    /// Initialize with Ollama backend (legacy)
     public init(
         databasePath: String,
         ollamaURL: String = "http://localhost:11434",
@@ -19,10 +31,31 @@ public actor RAGEngine {
         rerankerPath: String = "/Volumes/Plutonian/_models/jina-reranker/jina-rerank-cli.py"
     ) throws {
         self.store = try ChunkStore(databasePath: databasePath)
-        self.embedder = Embedder(baseURL: ollamaURL, model: embeddingModel)
         self.vectorSearch = VectorSearch()
-        self.reranker = Reranker(rerankerPath: rerankerPath)
+        self.backend = .ollama(url: ollamaURL, model: embeddingModel)
+        self.ollamaEmbedder = Embedder(baseURL: ollamaURL, model: embeddingModel)
+        self.ollamaReranker = Reranker(rerankerPath: rerankerPath)
     }
+    
+    /// Initialize with MLX backend (recommended for Apple Silicon)
+    public init(
+        databasePath: String,
+        mlxModelId: String = "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
+    ) throws {
+        self.store = try ChunkStore(databasePath: databasePath)
+        self.vectorSearch = VectorSearch()
+        self.backend = .mlx(modelId: mlxModelId)
+        self.mlxEmbedder = MLXEmbedder(modelId: mlxModelId)
+        // MLXReranker will be initialized lazily when needed
+    }
+    
+    /// Get the current embedder (lazy MLX reranker init)
+    private func ensureMLXReranker() async {
+        if mlxReranker == nil, let embedder = mlxEmbedder {
+            mlxReranker = MLXReranker(embedder: embedder)
+        }
+    }
+
     
     // MARK: - Search
     
@@ -36,10 +69,10 @@ public actor RAGEngine {
     ) async throws -> [SearchResult] {
         logger.info("Searching for: \(query)")
         
-        // 1. Embed the query
+        // 1. Embed the query (backend-agnostic)
         let queryVector: [Float]
         do {
-            queryVector = try await embedder.embed(query)
+            queryVector = try await embedQuery(query)
         } catch {
             logger.warning("Embedding failed, falling back to FTS5: \(error)")
             return try await fallbackSearch(query: query, limit: limit)
@@ -70,10 +103,10 @@ public actor RAGEngine {
             }
         }
         
-        // 5. Rerank (if enabled)
+        // 5. Rerank (if enabled, backend-agnostic)
         let finalResults: [(id: String, text: String, score: Float)]
         if useReranker {
-            finalResults = try await reranker.rerank(
+            finalResults = try await rerankCandidates(
                 query: query,
                 candidates: candidatesWithText,
                 topK: limit
@@ -96,6 +129,50 @@ public actor RAGEngine {
     private func fallbackSearch(query: String, limit: Int) async throws -> [SearchResult] {
         let results = try await store.keywordSearch(query: query, limit: limit)
         return results.map { SearchResult(id: $0.id, snippet: $0.snippet, score: 0.5) }
+    }
+    
+    // MARK: - Backend Helpers
+    
+    /// Embed query using the configured backend
+    private func embedQuery(_ text: String) async throws -> [Float] {
+        switch backend {
+        case .ollama:
+            guard let embedder = ollamaEmbedder else {
+                throw RAGError.embeddingFailed
+            }
+            return try await embedder.embed(text)
+        case .mlx:
+            guard let embedder = mlxEmbedder else {
+                throw RAGError.embeddingFailed
+            }
+            return try await embedder.embed(text)
+        }
+    }
+    
+    /// Embed text for storage using the configured backend
+    private func embedText(_ text: String) async throws -> [Float] {
+        return try await embedQuery(text)
+    }
+    
+    /// Rerank candidates using the configured backend
+    private func rerankCandidates(
+        query: String,
+        candidates: [(id: String, text: String, score: Float)],
+        topK: Int
+    ) async throws -> [(id: String, text: String, score: Float)] {
+        switch backend {
+        case .ollama:
+            guard let reranker = ollamaReranker else {
+                return Array(candidates.prefix(topK))
+            }
+            return try await reranker.rerank(query: query, candidates: candidates, topK: topK)
+        case .mlx:
+            await ensureMLXReranker()
+            guard let reranker = mlxReranker else {
+                return Array(candidates.prefix(topK))
+            }
+            return try await reranker.rerank(query: query, candidates: candidates, topK: topK)
+        }
     }
     
     // MARK: - Fetch
@@ -153,9 +230,11 @@ public actor RAGEngine {
             
             var vector: [Float]?
             do {
-                vector = try await embedder.embed(chunkText)
-                // Small delay to avoid overwhelming Ollama
-                try await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+                vector = try await embedText(chunkText)
+                // Small delay for Ollama only (MLX doesn't need it)
+                if case .ollama = backend {
+                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+                }
             } catch {
                 logger.warning("Failed to embed chunk \(index): \(error)")
             }
@@ -203,12 +282,14 @@ public actor RAGEngine {
         var success = 0
         for (id, text) in missingChunks {
             do {
-                let vector = try await embedder.embed(text)
+                let vector = try await embedText(text)
                 try await store.updateChunkVector(id: id, vector: vector)
                 success += 1
                 
-                // Small delay to avoid overwhelming Ollama
-                try await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+                // Small delay for Ollama only (MLX doesn't need it)
+                if case .ollama = backend {
+                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+                }
             } catch {
                 logger.warning("Failed to embed chunk \(id): \(error)")
             }
@@ -221,11 +302,64 @@ public actor RAGEngine {
         return success
     }
     
-    /// Check if Ollama is available
+    /// Check if backend is available
+    public func checkBackend() async -> (embedding: Bool, reranker: Bool) {
+        switch backend {
+        case .ollama:
+            async let embeddingAvailable = ollamaEmbedder?.isAvailable() ?? false
+            async let rerankerAvailable = ollamaReranker?.isAvailable() ?? false
+            return await (embeddingAvailable, rerankerAvailable)
+        case .mlx:
+            async let embeddingAvailable = mlxEmbedder?.isAvailable() ?? false
+            await ensureMLXReranker()
+            async let rerankerAvailable = mlxReranker?.isAvailable() ?? false
+            return await (embeddingAvailable, rerankerAvailable)
+        }
+    }
+    
+    /// Legacy method for backward compatibility
     public func checkOllama() async -> (embedding: Bool, reranker: Bool) {
-        async let embeddingAvailable = embedder.isAvailable()
-        async let rerankerAvailable = reranker.isAvailable()
-        return await (embeddingAvailable, rerankerAvailable)
+        return await checkBackend()
+    }
+    
+    /// Re-embed all chunks with current backend (for migration)
+    /// Returns: (success count, failure count, total)
+    public func reembedAll(
+        batchSize: Int = 50,
+        progressCallback: ((Int, Int) async -> Void)? = nil
+    ) async throws -> (success: Int, failed: Int, total: Int) {
+        logger.info("Starting full re-embedding with MLX...")
+        
+        // Fetch all chunks
+        let allChunks = try await store.fetchAllChunksForReembedding()
+        let total = allChunks.count
+        logger.info("Found \(total) chunks to re-embed")
+        
+        var success = 0
+        var failed = 0
+        
+        // Process in batches
+        for (index, (id, text)) in allChunks.enumerated() {
+            do {
+                let vector = try await embedText(text)
+                try await store.updateChunkVector(id: id, vector: vector)
+                success += 1
+            } catch {
+                logger.warning("Failed to embed chunk \(id): \(error)")
+                failed += 1
+            }
+            
+            // Report progress every batch
+            if (index + 1) % batchSize == 0 || index == allChunks.count - 1 {
+                await progressCallback?(index + 1, total)
+            }
+        }
+        
+        // Invalidate cache
+        vectorCache = nil
+        
+        logger.info("Re-embedding complete: \(success) success, \(failed) failed out of \(total)")
+        return (success, failed, total)
     }
 }
 

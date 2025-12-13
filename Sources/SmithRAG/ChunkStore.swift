@@ -159,6 +159,24 @@ public actor ChunkStore {
         }
     }
     
+    /// Fetch all chunks for re-embedding migration
+    public func fetchAllChunksForReembedding() throws -> [(id: String, text: String)] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, text FROM chunks ORDER BY document_id, chunk_index"
+            )
+            return rows.map { ($0["id"], $0["text"]) }
+        }
+    }
+    
+    /// Get total chunk count
+    public func chunkCount() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM chunks") ?? 0
+        }
+    }
+    
     // MARK: - FTS Search (fallback)
     
     public func keywordSearch(query: String, limit: Int) throws -> [(id: String, snippet: String)] {
