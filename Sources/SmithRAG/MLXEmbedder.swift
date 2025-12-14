@@ -26,17 +26,9 @@ public actor MLXEmbedder {
         logger.info("Loading MLX embedding model: \(modelId)")
         let startTime = Date()
         
-        // Resolve local path from HuggingFace cache to force offline load
-        let cachePath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub/models--mlx-community--Qwen3-Embedding-0.6B-4bit-DWQ/snapshots/6c3ae70858513f1a78e9cdca3cae330d9075cd2a")
-        
-        let config: ModelConfiguration
-        if FileManager.default.fileExists(atPath: cachePath.path) && modelId.contains("Qwen3") {
-            logger.info("loading from local cache: \(cachePath.path)")
-            config = ModelConfiguration(directory: cachePath)
-        } else {
-             config = ModelConfiguration(id: modelId)
-        }
+        // Standard model configuration - relies on MLX/HuggingFace cache
+        // Run `huggingface-cli download <model-id>` to ensure offline availability
+        let config = ModelConfiguration(id: modelId)
         
         container = try await loadModelContainer(configuration: config) { progress in
             if progress.fractionCompleted < 1.0 {
