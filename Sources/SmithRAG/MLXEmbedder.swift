@@ -48,6 +48,9 @@ public actor MLXEmbedder {
         guard let container = container else {
             throw MLXEmbedderError.modelNotLoaded
         }
+
+        // Capture embedding dimension outside the Sendable closure
+        let dim = embeddingDimension
         
         return await container.perform { model, tokenizer, pooling in
             // Tokenize input
@@ -72,14 +75,30 @@ public actor MLXEmbedder {
             )
             
             // Apply pooling with normalization
-            let pooledOutput = pooling(output, normalize: true, applyLayerNorm: true)
+            var pooledOutput = pooling(output, normalize: true, applyLayerNorm: true)
+
+            // Some models ship without a pooling config (Pooler = .none). In that case the
+            // pooling call returns [batch, seq, dim]; collapse across tokens to produce a
+            // single embedding vector per input.
+            let pooledShape = pooledOutput.shape.map { Int($0) }
+            if pooledShape.count == 3, pooledShape[1] > 0 {
+                pooledOutput = sum(pooledOutput, axis: 1) / MLXArray(Float(pooledShape[1]))
+            }
             
             // Ensure computation is complete
             eval(pooledOutput)
             
-            // Convert to Float array - get the first (and only) batch
-            let floatArray: [Float] = pooledOutput[0].asArray(Float.self)
-            return floatArray
+            // Convert to Float array - take first item in batch
+            let vector: [Float]
+            let finalShape = pooledOutput.shape.map { Int($0) }
+            if finalShape.count == 2, finalShape[0] > 0 {
+                vector = pooledOutput[0, 0...].asArray(Float.self)
+            } else {
+                vector = pooledOutput.asArray(Float.self)
+            }
+
+            // Truncate in case extra dims slipped through (defensive)
+            return vector.count > dim ? Array(vector.prefix(dim)) : vector
         }
     }
     
@@ -90,6 +109,8 @@ public actor MLXEmbedder {
         guard let container = container else {
             throw MLXEmbedderError.modelNotLoaded
         }
+
+        let dim = embeddingDimension
         
         return await container.perform { model, tokenizer, pooling in
             let inputs = texts.map {
@@ -118,13 +139,28 @@ public actor MLXEmbedder {
             let output = model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask)
             
             // Apply pooling with normalization
-            let pooledOutput = pooling(output, normalize: true, applyLayerNorm: true)
+            var pooledOutput = pooling(output, normalize: true, applyLayerNorm: true)
+
+            // Fallback pooling if none provided: reduce token dimension
+            let pooledShape = pooledOutput.shape.map { Int($0) }
+            if pooledShape.count == 3, pooledShape[1] > 0 {
+                pooledOutput = sum(pooledOutput, axis: 1) / MLXArray(Float(pooledShape[1]))
+            }
             
             // Ensure computation is complete
             eval(pooledOutput)
             
-            // Convert each embedding to Float array
-            return pooledOutput.map { $0.asArray(Float.self) }
+            // Convert each embedding to Float array (first item per batch row)
+            return pooledOutput.map {
+                let shape = $0.shape.map { Int($0) }
+                let vector: [Float]
+                if shape.count == 2, shape[0] > 0 {
+                    vector = $0[0, 0...].asArray(Float.self)
+                } else {
+                    vector = $0.asArray(Float.self)
+                }
+                return vector.count > dim ? Array(vector.prefix(dim)) : vector
+            }
         }
     }
     
