@@ -7,7 +7,6 @@ public struct VectorSearch {
     public init() {}
     
     /// Find top-K most similar vectors using cosine similarity
-    /// Assumes vectors are normalized (nomic-embed-text outputs normalized vectors)
     public func search(
         query: [Float],
         candidates: [(id: String, vector: [Float])],
@@ -16,9 +15,12 @@ public struct VectorSearch {
         var results: [(id: String, score: Float)] = []
         results.reserveCapacity(candidates.count)
         
+        // Pre-compute query norm
+        let queryNorm = vectorNorm(query)
+        guard queryNorm > 0 else { return [] }
+        
         for (id, vector) in candidates {
-            // Cosine similarity for normalized vectors = dot product
-            let score = dotProduct(query, vector)
+            let score = cosineSimilarity(query, vector, queryNorm: queryNorm)
             results.append((id, score))
         }
         
@@ -29,13 +31,24 @@ public struct VectorSearch {
             .map { $0 }
     }
     
-    /// Compute dot product using vDSP (Apple Accelerate framework)
-    private func dotProduct(_ a: [Float], _ b: [Float]) -> Float {
+    /// Compute cosine similarity with pre-computed query norm
+    private func cosineSimilarity(_ a: [Float], _ b: [Float], queryNorm: Float) -> Float {
         guard a.count == b.count else { return 0 }
         
-        var result: Float = 0
-        vDSP_dotpr(a, 1, b, 1, &result, vDSP_Length(a.count))
-        return result
+        var dot: Float = 0
+        vDSP_dotpr(a, 1, b, 1, &dot, vDSP_Length(a.count))
+        
+        let bNorm = vectorNorm(b)
+        guard bNorm > 0 else { return 0 }
+        
+        return dot / (queryNorm * bNorm)
+    }
+    
+    /// Compute vector L2 norm using vDSP
+    private func vectorNorm(_ v: [Float]) -> Float {
+        var sumOfSquares: Float = 0
+        vDSP_svesq(v, 1, &sumOfSquares, vDSP_Length(v.count))
+        return sqrt(sumOfSquares)
     }
     
     /// Normalize a vector to unit length
