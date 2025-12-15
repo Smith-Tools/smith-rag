@@ -37,17 +37,71 @@ SmithRAG bridges the gap between **raw documentation** and **actionable context*
 
 ## 📦 Installation
 
-### From Source
+### Step 1: Build from Source
+
 ```bash
 git clone https://github.com/Smith-Tools/smith-rag.git
 cd smith-rag
 
-# Build with xcodebuild (required for Metal shaders)
-xcodebuild -scheme rag -destination 'platform=macOS' build
+# Build Release (required for Metal shader bundling)
+xcodebuild -scheme rag -configuration Release -destination 'platform=macOS' build
+```
 
-# Download the embedding model (one-time, ~600MB)
+### Step 2: Install Binary
+
+The binary requires the Metal shader bundle to be in the same directory:
+
+```bash
+# Create installation directory
+mkdir -p ~/.smith/bin
+
+# Copy binary and Metal bundle
+cp ~/Library/Developer/Xcode/DerivedData/smith-rag-*/Build/Products/Release/rag ~/.smith/bin/
+cp -R ~/Library/Developer/Xcode/DerivedData/smith-rag-*/Build/Products/Release/mlx-swift_Cmlx.bundle ~/.smith/bin/
+
+# Add to PATH (or create symlink)
+echo 'export PATH="$HOME/.smith/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# Verify installation
+rag --help
+```
+
+### Step 3: Download Embedding Model
+
+```bash
+# One-time download (~600MB)
+pip install huggingface-hub
 huggingface-cli download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 ```
+
+### Step 4: Setup Database
+
+```bash
+# Create RAG data directory
+mkdir -p ~/.smith/rag
+
+# Copy your pre-embedded database (or create new)
+# The sosumi database contains 12,500+ WWDC transcript chunks
+cp /path/to/complete_rag.db ~/.smith/rag/sosumi.db
+```
+
+### Verify Installation
+
+```bash
+rag search "SwiftUI Observable" --database ~/.smith/rag/sosumi.db --limit 3
+```
+
+## 🤖 Agent Integration (Maxwell)
+
+For Claude/Maxwell agent skills, add to your skill file:
+
+```bash
+# Step 1: ALWAYS search RAG first
+rag search "<query>" --database ~/.smith/rag/sosumi.db --limit 10
+```
+
+The agent can call this via Bash tool. Results are returned as scored chunks from WWDC transcripts.
 
 ### As Swift Package Dependency
 ```swift
