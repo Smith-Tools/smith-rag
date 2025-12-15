@@ -88,31 +88,31 @@ public actor RAGEngine {
             return try await fallbackSearch(query: query, limit: limit)
         }
         
-        // 3. Vector search
-        let topCandidates = vectorSearch.search(
+        // 3. Vector search (get vectors for reranking)
+        let topCandidates = vectorSearch.searchWithVectors(
             query: queryVector,
             candidates: candidates,
             topK: candidateCount
         )
         
-        // 4. Fetch text for top candidates
-        var candidatesWithText: [(id: String, text: String, score: Float)] = []
-        for (id, score) in topCandidates {
+        // 4. Fetch text for top candidates (keeping vectors for rerank)
+        var candidatesWithTextAndVectors: [(id: String, text: String, vector: [Float], score: Float)] = []
+        for (id, vector, score) in topCandidates {
             if let chunk = try await store.fetchChunk(id: id) {
-                candidatesWithText.append((id, chunk.text, score))
+                candidatesWithTextAndVectors.append((id, chunk.text, vector, score))
             }
         }
         
-        // 5. Rerank (if enabled, backend-agnostic)
+        // 5. Rerank using stored vectors (FAST - no MLX inference)
         let finalResults: [(id: String, text: String, score: Float)]
         if useReranker {
-            finalResults = try await rerankCandidates(
-                query: query,
-                candidates: candidatesWithText,
+            finalResults = try await rerankWithStoredVectors(
+                queryVector: queryVector,
+                candidates: candidatesWithTextAndVectors,
                 topK: limit
             )
         } else {
-            finalResults = Array(candidatesWithText.prefix(limit))
+            finalResults = Array(candidatesWithTextAndVectors.prefix(limit).map { ($0.id, $0.text, $0.score) })
         }
         
         // 6. Format results
@@ -172,6 +172,34 @@ public actor RAGEngine {
                 return Array(candidates.prefix(topK))
             }
             return try await reranker.rerank(query: query, candidates: candidates, topK: topK)
+        }
+    }
+    
+    /// Fast rerank using stored vectors (no MLX inference needed)
+    private func rerankWithStoredVectors(
+        queryVector: [Float],
+        candidates: [(id: String, text: String, vector: [Float], score: Float)],
+        topK: Int
+    ) async throws -> [(id: String, text: String, score: Float)] {
+        switch backend {
+        case .ollama:
+            // Ollama doesn't support vector-based reranking, fall back to legacy
+            guard let reranker = ollamaReranker else {
+                return Array(candidates.prefix(topK).map { ($0.id, $0.text, $0.score) })
+            }
+            let legacyCandidates = candidates.map { ($0.id, $0.text, $0.score) }
+            return try await reranker.rerank(query: "", candidates: legacyCandidates, topK: topK)
+        case .mlx:
+            await ensureMLXReranker()
+            guard let reranker = mlxReranker else {
+                return Array(candidates.prefix(topK).map { ($0.id, $0.text, $0.score) })
+            }
+            // Use new fast rerank with stored vectors
+            return await reranker.rerankWithVectors(
+                queryVector: queryVector,
+                candidates: candidates,
+                topK: topK
+            )
         }
     }
     

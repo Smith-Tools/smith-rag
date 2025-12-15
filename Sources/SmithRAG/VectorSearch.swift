@@ -12,7 +12,18 @@ public struct VectorSearch {
         candidates: [(id: String, vector: [Float])],
         topK: Int
     ) -> [(id: String, score: Float)] {
-        var results: [(id: String, score: Float)] = []
+        // Use searchWithVectors and strip the vectors
+        return searchWithVectors(query: query, candidates: candidates, topK: topK)
+            .map { ($0.id, $0.score) }
+    }
+    
+    /// Find top-K most similar vectors, returning vectors for reranking
+    public func searchWithVectors(
+        query: [Float],
+        candidates: [(id: String, vector: [Float])],
+        topK: Int
+    ) -> [(id: String, vector: [Float], score: Float)] {
+        var results: [(id: String, vector: [Float], score: Float)] = []
         results.reserveCapacity(candidates.count)
         
         // Pre-compute query norm
@@ -21,7 +32,7 @@ public struct VectorSearch {
         
         for (id, vector) in candidates {
             let score = cosineSimilarity(query, vector, queryNorm: queryNorm)
-            results.append((id, score))
+            results.append((id, vector, score))
         }
         
         // Sort by score descending, take top-K
