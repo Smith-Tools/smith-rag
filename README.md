@@ -28,11 +28,11 @@ SmithRAG bridges the gap between **raw documentation** and **actionable context*
 
 ## ✨ Key Features
 
-- **MLX-Native Embeddings**: Uses `Qwen3-Embedding-0.6B-4bit` (1024d) running entirely on Apple Silicon GPU
+- **MLX-Native Embeddings**: Uses `Qwen3-Embedding-0.6B-4bit` (1024d) on Apple Silicon GPU
+- **Instant Reranking**: Uses stored vectors for sub-second reranking (no model inference)
 - **Offline-First**: No API calls, no cloud dependencies—all processing happens locally
-- **Embedding-Based Reranking**: Results are sorted by semantic relevance, not just keyword matching
+- **12,500+ WWDC Chunks**: Covers sessions from 2014-2025
 - **FTS5 Fallback**: Full-text search when vectors aren't available
-- **Multiple Backends**: Supports MLX (recommended) and Ollama
 - **WAL Mode**: Database optimized for concurrent read/write operations
 
 ## 📦 Installation
