@@ -37,59 +37,50 @@ SmithRAG bridges the gap between **raw documentation** and **actionable context*
 
 ## 📦 Installation
 
-### Step 1: Build from Source
+### Quick Install (copy-paste)
 
 ```bash
+# 1. Clone and build
 git clone https://github.com/Smith-Tools/smith-rag.git
 cd smith-rag
-
-# Build Release (required for Metal shader bundling)
 xcodebuild -scheme rag -configuration Release -destination 'platform=macOS' build
-```
 
-### Step 2: Install Binary
+# 2. Install binary, Metal bundle, and wrapper script
+mkdir -p ~/.smith/bin ~/.smith/rag
+DERIVED=$(ls -d ~/Library/Developer/Xcode/DerivedData/smith-rag-*/Build/Products/Release 2>/dev/null | head -1)
+cp "$DERIVED/rag" ~/.smith/bin/
+cp -R "$DERIVED/mlx-swift_Cmlx.bundle" ~/.smith/bin/
 
-The binary requires the Metal shader bundle to be in the same directory:
+# Create wrapper (required for Metal library resolution)
+cat > ~/.smith/bin/rag-wrapper << 'EOF'
+#!/bin/bash
+cd ~/.smith/bin && exec ./rag "$@"
+EOF
+chmod +x ~/.smith/bin/rag-wrapper
+sudo ln -sf ~/.smith/bin/rag-wrapper /usr/local/bin/rag
 
-```bash
-# Create installation directory
-mkdir -p ~/.smith/bin
+# 3. Download embedding model (~335MB)
+pip install huggingface-hub
+huggingface-cli download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 
-# Copy binary and Metal bundle
-cp ~/Library/Developer/Xcode/DerivedData/smith-rag-*/Build/Products/Release/rag ~/.smith/bin/
-cp -R ~/Library/Developer/Xcode/DerivedData/smith-rag-*/Build/Products/Release/mlx-swift_Cmlx.bundle ~/.smith/bin/
-
-# Add to PATH (or create symlink)
-echo 'export PATH="$HOME/.smith/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-
-# Verify installation
+# 4. Verify
 rag --help
 ```
 
-### Step 3: Download Embedding Model
+### What Gets Installed
+
+| Path | Description |
+|------|-------------|
+| `~/.smith/bin/rag` | Main binary |
+| `~/.smith/bin/mlx-swift_Cmlx.bundle` | Metal shaders |
+| `~/.smith/bin/rag-wrapper` | Wrapper for correct CWD |
+| `/usr/local/bin/rag` | Symlink to wrapper |
+| `~/.cache/huggingface/...` | MLX model files |
+
+### Usage
 
 ```bash
-# One-time download (~600MB)
-pip install huggingface-hub
-huggingface-cli download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
-```
-
-### Step 4: Setup Database
-
-```bash
-# Create RAG data directory
-mkdir -p ~/.smith/rag
-
-# Copy your pre-embedded database (or create new)
-# The sosumi database contains 12,500+ WWDC transcript chunks
-cp /path/to/complete_rag.db ~/.smith/rag/sosumi.db
-```
-
-### Verify Installation
-
-```bash
-rag search "SwiftUI Observable" --database ~/.smith/rag/sosumi.db --limit 3
+rag search "SwiftUI Observable" --database ~/.smith/rag/sosumi.db --limit 5
 ```
 
 ## 🤖 Agent Integration (Maxwell)
