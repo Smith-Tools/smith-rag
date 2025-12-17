@@ -88,12 +88,28 @@ public actor RAGEngine {
             return try await fallbackSearch(query: query, limit: limit)
         }
         
-        // 3. Vector search (get vectors for reranking)
-        let topCandidates = vectorSearch.searchWithVectors(
+        // 3a. Vector search (get vectors for reranking)
+        var topCandidates = vectorSearch.searchWithVectors(
             query: queryVector,
             candidates: candidates,
             topK: candidateCount
         )
+        
+        // 3b. Keyword search (Hybrid - FTS5)
+        // We fetch keyword matches to catch exact terms (like "deadbeef") that might be missed by semantic search
+        let keywordMatches = try await store.keywordSearch(query: query, limit: limit * 2) // Fetch a few extra for robustness
+        
+        // Merge keyword matches into candidates if they aren't already there
+        let existingIds = Set(topCandidates.map { $0.id })
+        for match in keywordMatches {
+            if !existingIds.contains(match.id) {
+                // Add keyword match with a neutral score (0.5) - the reranker will decide its true relevance
+                // We need to look up its vector from the cache
+                if let vector = candidates.first(where: { $0.id == match.id })?.vector {
+                    topCandidates.append((match.id, vector, 0.5))
+                }
+            }
+        }
         
         // 4. Fetch text for top candidates (keeping vectors for rerank)
         var candidatesWithTextAndVectors: [(id: String, text: String, vector: [Float], score: Float)] = []
@@ -103,12 +119,15 @@ public actor RAGEngine {
             }
         }
         
-        // 5. Rerank using stored vectors (FAST - no MLX inference)
+        // 5. Rerank using Cross-Encoder (slower but handles keyword matches better)
         let finalResults: [(id: String, text: String, score: Float)]
         if useReranker {
-            finalResults = try await rerankWithStoredVectors(
-                queryVector: queryVector,
-                candidates: candidatesWithTextAndVectors,
+            // Convert to format expected by rerankCandidates
+            let candidatesForRerank = candidatesWithTextAndVectors.map { ($0.id, $0.text, $0.score) }
+            
+            finalResults = try await rerankCandidates(
+                query: query,
+                candidates: candidatesForRerank,
                 topK: limit
             )
         } else {
