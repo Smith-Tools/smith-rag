@@ -236,14 +236,25 @@ public actor RAGEngine {
     // MARK: - Ingestion
     
     /// Ingest a document (chunking + embedding)
+    /// - Returns: `true` if document was ingested, `false` if skipped (already exists)
+    @discardableResult
     public func ingest(
         documentId: String,
         title: String,
         url: String?,
         content: String,
         chunkSize: Int = 500,
-        overlap: Int = 50
-    ) async throws {
+        overlap: Int = 50,
+        skipIfExists: Bool = false
+    ) async throws -> Bool {
+        // Skip if document already exists
+        if skipIfExists {
+            if let _ = try await store.fetchDocument(id: documentId) {
+                logger.info("Skipping existing document: \(title)")
+                return false
+            }
+        }
+        
         logger.info("Ingesting document: \(title)")
         
         // 1. Store document
@@ -280,6 +291,7 @@ public actor RAGEngine {
         vectorCache = nil
         
         logger.info("Ingested \(chunks.count) chunks for \(title)")
+        return true
     }
     
     /// Split text into overlapping chunks
