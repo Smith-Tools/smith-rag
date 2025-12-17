@@ -8,6 +8,7 @@ let package = Package(
 	],
 	products: [
 		.library(name: "SmithRAG", targets: ["SmithRAG"]),
+		.library(name: "SmithRAGCommands", targets: ["SmithRAGCommands"]),
 		.executable(name: "rag", targets: ["RAGCLI"]),
 	],
 	dependencies: [
@@ -26,10 +27,17 @@ let package = Package(
 				.product(name: "MLXEmbedders", package: "mlx-swift-lm"),
 			]
 		),
+		.target(
+			name: "SmithRAGCommands",
+			dependencies: [
+				"SmithRAG",
+				.product(name: "ArgumentParser", package: "swift-argument-parser"),
+			]
+		),
 		.executableTarget(
 			name: "RAGCLI",
 			dependencies: [
-				"SmithRAG",
+				"SmithRAGCommands",
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			],
 			swiftSettings: [
