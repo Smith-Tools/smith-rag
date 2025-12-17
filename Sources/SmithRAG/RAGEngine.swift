@@ -119,15 +119,12 @@ public actor RAGEngine {
             }
         }
         
-        // 5. Rerank using Cross-Encoder (slower but handles keyword matches better)
+        // 5. Rerank using stored vectors (FAST - no MLX inference)
         let finalResults: [(id: String, text: String, score: Float)]
         if useReranker {
-            // Convert to format expected by rerankCandidates
-            let candidatesForRerank = candidatesWithTextAndVectors.map { ($0.id, $0.text, $0.score) }
-            
-            finalResults = try await rerankCandidates(
-                query: query,
-                candidates: candidatesForRerank,
+            finalResults = try await rerankWithStoredVectors(
+                queryVector: queryVector,
+                candidates: candidatesWithTextAndVectors,
                 topK: limit
             )
         } else {
