@@ -128,11 +128,38 @@ public struct RAGStatusCommand: AsyncParsableCommand {
 
 // MARK: - Defaults
 
+/// Known RAG databases in the Smith ecosystem
+public enum RAGDatabase: String, Sendable {
+    case sosumi = "sosumi.db"
+    case deadbeef = "deadbeef.db"
+    case scully = "scully.db"
+    case `default` = "default.db"
+
+    /// Full installation path for this database
+    public var path: String {
+        RAGDefaults.ragBaseDirectory.appendingPathComponent(rawValue).path
+    }
+}
+
 public enum RAGDefaults {
     public static let modelId = "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
-    
+
+    /// Base directory for all RAG databases (override with SMITH_RAG_HOME env var)
+    public static var ragBaseDirectory: URL {
+        if let envPath = ProcessInfo.processInfo.environment["SMITH_RAG_HOME"] {
+            return URL(fileURLWithPath: envPath)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".smith/rag")
+    }
+
+    /// Get path for a specific database
+    public static func databasePath(for database: RAGDatabase) -> String {
+        database.path
+    }
+
+    /// Legacy default (for backward compatibility)
     public static func databasePath() -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".smith/rag/default.db").path
+        databasePath(for: .default)
     }
 }
