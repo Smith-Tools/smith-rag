@@ -7,7 +7,7 @@ import SmithRAG
 /// Search command - can be composed into any CLI
 public struct RAGSearchCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "rag-search",
+        commandName: "search",
         abstract: "Search for relevant content using RAG"
     )
     
@@ -34,23 +34,39 @@ public struct RAGSearchCommand: AsyncParsableCommand {
     
     @Flag(name: .long, help: "Output as JSON")
     public var json: Bool = false
+
+    @Flag(name: .long, help: "Exact-term FTS5 search (skip embeddings)")
+    public var exact: Bool = false
+
+    @Flag(name: .long, help: "Semantic-only search (no keyword matches)")
+    public var semantic: Bool = false
     
     public init() {}
     
     public func run() async throws {
+        if exact && semantic {
+            throw ValidationError("Choose only one: --exact or --semantic")
+        }
+
         let engine: RAGEngine
         if ollama {
             engine = try RAGEngine(databasePath: database)
         } else {
             engine = try RAGEngine(databasePath: database, mlxModelId: model)
         }
-        
-        let results = try await engine.search(
-            query: query,
-            limit: limit,
-            candidateCount: candidates,
-            useReranker: !noRerank
-        )
+
+        let results: [SearchResult]
+        if exact {
+            results = try await engine.exactSearch(query: query, limit: limit)
+        } else {
+            results = try await engine.search(
+                query: query,
+                limit: limit,
+                candidateCount: candidates,
+                useReranker: !noRerank,
+                includeKeywordMatches: !semantic
+            )
+        }
         
         if json {
             let data = try JSONEncoder().encode(results)
@@ -71,7 +87,7 @@ public struct RAGSearchCommand: AsyncParsableCommand {
 /// Fetch command - retrieve content by ID
 public struct RAGFetchCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "rag-fetch",
+        commandName: "fetch",
         abstract: "Fetch content by chunk or document ID"
     )
     
@@ -107,7 +123,7 @@ public struct RAGFetchCommand: AsyncParsableCommand {
 /// Status command - check backend availability
 public struct RAGStatusCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "rag-status",
+        commandName: "status",
         abstract: "Check RAG backend status"
     )
     

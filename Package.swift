@@ -9,7 +9,7 @@ let package = Package(
 	products: [
 		.library(name: "SmithRAG", targets: ["SmithRAG"]),
 		.library(name: "SmithRAGCommands", targets: ["SmithRAGCommands"]),
-		.executable(name: "rag", targets: ["RAGCLI"]),
+		.executable(name: "smith-rag", targets: ["RAGCLI"]),
 	],
 	dependencies: [
 		.package(url: "https://github.com/groue/GRDB.swift.git", from: "6.24.0"),

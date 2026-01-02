@@ -43,44 +43,44 @@ SmithRAG bridges the gap between **raw documentation** and **actionable context*
 # 1. Clone and build
 git clone https://github.com/Smith-Tools/smith-rag.git
 cd smith-rag
-xcodebuild -scheme rag -configuration Release -destination 'platform=macOS' build
+xcodebuild -scheme smith-rag -configuration Release -destination 'platform=macOS' build
 
 # 2. Install binary, Metal bundle, and wrapper script
 mkdir -p ~/.smith/bin ~/.smith/rag
 DERIVED=$(ls -d ~/Library/Developer/Xcode/DerivedData/smith-rag-*/Build/Products/Release 2>/dev/null | head -1)
-cp "$DERIVED/rag" ~/.smith/bin/
+cp "$DERIVED/smith-rag" ~/.smith/bin/
 cp -R "$DERIVED/mlx-swift_Cmlx.bundle" ~/.smith/bin/
 
 # Create wrapper (required for Metal library resolution)
-cat > ~/.smith/bin/rag-wrapper << 'EOF'
+cat > ~/.smith/bin/smith-rag-wrapper << 'EOF'
 #!/bin/bash
-cd ~/.smith/bin && exec ./rag "$@"
+cd ~/.smith/bin && exec ./smith-rag "$@"
 EOF
-chmod +x ~/.smith/bin/rag-wrapper
-sudo ln -sf ~/.smith/bin/rag-wrapper /usr/local/bin/rag
+chmod +x ~/.smith/bin/smith-rag-wrapper
+sudo ln -sf ~/.smith/bin/smith-rag-wrapper /usr/local/bin/smith-rag
 
 # 3. Download embedding model (~335MB)
 pip install huggingface-hub
 huggingface-cli download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 
 # 4. Verify
-rag --help
+smith-rag --help
 ```
 
 ### What Gets Installed
 
 | Path | Description |
 |------|-------------|
-| `~/.smith/bin/rag` | Main binary |
+| `~/.smith/bin/smith-rag` | Main binary |
 | `~/.smith/bin/mlx-swift_Cmlx.bundle` | Metal shaders |
-| `~/.smith/bin/rag-wrapper` | Wrapper for correct CWD |
-| `/usr/local/bin/rag` | Symlink to wrapper |
+| `~/.smith/bin/smith-rag-wrapper` | Wrapper for correct CWD |
+| `/usr/local/bin/smith-rag` | Symlink to wrapper |
 | `~/.cache/huggingface/...` | MLX model files |
 
 ### Usage
 
 ```bash
-rag search "SwiftUI Observable" --database ~/.smith/rag/sosumi.db --limit 5
+smith-rag search "SwiftUI Observable" --database ~/.smith/rag/sosumi.db --limit 5
 ```
 
 ## 🤖 Agent Integration (Maxwell)
@@ -89,7 +89,7 @@ For Claude/Maxwell agent skills, add to your skill file:
 
 ```bash
 # Step 1: ALWAYS search RAG first
-rag search "<query>" --database ~/.smith/rag/sosumi.db --limit 10
+smith-rag search "<query>" --database ~/.smith/rag/sosumi.db --limit 10
 ```
 
 The agent can call this via Bash tool. Results are returned as scored chunks from WWDC transcripts.
@@ -104,20 +104,29 @@ The agent can call this via Bash tool. Results are returned as scored chunks fro
 ### CLI Search
 ```bash
 # Semantic search with MLX embeddings
-rag search "SwiftUI state management with @Observable" --database ~/.smith/rag/sosumi.db
+smith-rag search "SwiftUI state management with @Observable" --database ~/.smith/rag/sosumi.db
+
+# Exact-term search (FTS5)
+smith-rag search "AnimationPlaybackController" --database ~/.smith/rag/sosumi.db --exact
+
+# Semantic-only (skip keyword matches)
+smith-rag search "SwiftUI animation" --database ~/.smith/rag/sosumi.db --semantic
 
 # Limit results and skip reranking for speed
-rag search "Metal shader compilation" --limit 5 --no-rerank
+smith-rag search "Metal shader compilation" --limit 5 --no-rerank
 
 # Use different model
-rag search "async/await patterns" --model nomic-ai/nomic-embed-text-v1.5
+smith-rag search "async/await patterns" --model nomic-ai/nomic-embed-text-v1.5
 ```
 
-### Migration (Re-embedding)
+### Fetch & Status
 ```bash
-# Re-embed all chunks with Qwen3 (1024d vectors)
-rag migrate --confirm --database ~/.smith/rag/sosumi.db
+smith-rag fetch <chunk-id> --database ~/.smith/rag/sosumi.db --mode context
+smith-rag status --database ~/.smith/rag/sosumi.db
 ```
+
+### Embedding Maintenance
+Embedding refresh is handled by the source tools (e.g., `sosumi embed-missing`, `deadbeef embed-missing`).
 
 ### Swift API
 ```swift

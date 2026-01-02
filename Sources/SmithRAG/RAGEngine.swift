@@ -65,7 +65,8 @@ public actor RAGEngine {
         query: String,
         limit: Int = 5,
         candidateCount: Int = 100,
-        useReranker: Bool = true
+        useReranker: Bool = true,
+        includeKeywordMatches: Bool = true
     ) async throws -> [SearchResult] {
         logger.info("Searching for: \(query)")
         
@@ -97,16 +98,18 @@ public actor RAGEngine {
         
         // 3b. Keyword search (Hybrid - FTS5)
         // We fetch keyword matches to catch exact terms (like "deadbeef") that might be missed by semantic search
-        let keywordMatches = try await store.keywordSearch(query: query, limit: limit * 2) // Fetch a few extra for robustness
-        
-        // Merge keyword matches into candidates if they aren't already there
-        let existingIds = Set(topCandidates.map { $0.id })
-        for match in keywordMatches {
-            if !existingIds.contains(match.id) {
-                // Add keyword match with a neutral score (0.5) - the reranker will decide its true relevance
-                // We need to look up its vector from the cache
-                if let vector = candidates.first(where: { $0.id == match.id })?.vector {
-                    topCandidates.append((match.id, vector, 0.5))
+        if includeKeywordMatches {
+            let keywordMatches = try await store.keywordSearch(query: query, limit: limit * 2) // Fetch a few extra for robustness
+            
+            // Merge keyword matches into candidates if they aren't already there
+            let existingIds = Set(topCandidates.map { $0.id })
+            for match in keywordMatches {
+                if !existingIds.contains(match.id) {
+                    // Add keyword match with a neutral score (0.5) - the reranker will decide its true relevance
+                    // We need to look up its vector from the cache
+                    if let vector = candidates.first(where: { $0.id == match.id })?.vector {
+                        topCandidates.append((match.id, vector, 0.5))
+                    }
                 }
             }
         }
@@ -143,6 +146,12 @@ public actor RAGEngine {
     
     /// Fallback search using FTS5 (keyword-based)
     private func fallbackSearch(query: String, limit: Int) async throws -> [SearchResult] {
+        let results = try await store.keywordSearch(query: query, limit: limit)
+        return results.map { SearchResult(id: $0.id, snippet: $0.snippet, score: 0.5) }
+    }
+
+    /// Exact-term search using FTS5 (keyword-based)
+    public func exactSearch(query: String, limit: Int = 5) async throws -> [SearchResult] {
         let results = try await store.keywordSearch(query: query, limit: limit)
         return results.map { SearchResult(id: $0.id, snippet: $0.snippet, score: 0.5) }
     }
